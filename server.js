@@ -173,6 +173,11 @@ function parseTestedAt(body) {
   return raw;
 }
 
+// 编号归一化：去前后空白后转小写，用于唯一性比较（兼容历史带空白的编号）
+function normalizeCode(code) {
+  return String(code).trim().toLowerCase();
+}
+
 function findClock(db, clockId) {
   const clock = db.clocks.find((item) => item.id === clockId);
   if (!clock) {
@@ -277,10 +282,24 @@ async function handle(req, res) {
   if (req.method === "POST" && pathname === "/clocks") {
     const body = await parseBody(req);
     required(body, ["code", "escapementType", "balanceFrequency"]);
+    const code = typeof body.code === "string" ? body.code.trim() : body.code;
+    if (code === "") {
+      const error = new Error("编号不能为空");
+      error.status = 400;
+      throw error;
+    }
+    // 编号唯一：去前后空白、大小写不敏感比较，重复返回 409 且不写入
+    const incoming = normalizeCode(code);
+    const duplicate = db.clocks.some((item) => normalizeCode(item.code) === incoming);
+    if (duplicate) {
+      const error = new Error(`钟表编号已存在：${code}`);
+      error.status = 409;
+      throw error;
+    }
     const targetDailyRateSeconds = parseNumberField(body, "targetDailyRateSeconds", { defaultValue: 30 });
     const clock = {
       id: makeId("clock"),
-      code: body.code,
+      code,
       escapementType: body.escapementType,
       balanceFrequency: body.balanceFrequency,
       targetDailyRateSeconds,
