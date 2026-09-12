@@ -106,6 +106,51 @@ function required(body, fields) {
   }
 }
 
+// 数值字段合法区间（日差：秒/天，摆幅：度）
+const RANGE = {
+  targetDailyRateSeconds: { min: 0, max: 600, label: "目标日差" },
+  currentDailyRateSeconds: { min: -3600, max: 3600, label: "当前日差" },
+  dailyRateSeconds: { min: -3600, max: 3600, label: "复测日差" },
+  amplitude: { min: 0, max: 360, label: "摆幅" }
+};
+
+// 解析并校验数值字段：空值、非数字、布尔、NaN、越界均返回 400。
+// required=false 且字段缺省时返回 defaultValue；显式传 null/空串仍按空值报错。
+function parseNumberField(body, field, { required = false, defaultValue } = {}) {
+  const rule = RANGE[field];
+  const raw = body[field];
+  const isEmpty = raw === undefined || raw === null
+    || (typeof raw === "string" && raw.trim() === "");
+
+  if (isEmpty) {
+    if (!required && raw === undefined) return defaultValue;
+    const error = new Error(`${rule.label}不能为空`);
+    error.status = 400;
+    throw error;
+  }
+
+  if (typeof raw === "boolean" || (typeof raw === "object")) {
+    const error = new Error(`${rule.label}必须是数字`);
+    error.status = 400;
+    throw error;
+  }
+
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    const error = new Error(`${rule.label}必须是可解析的数字，收到：${String(raw)}`);
+    error.status = 400;
+    throw error;
+  }
+
+  if (value < rule.min || value > rule.max) {
+    const error = new Error(`${rule.label}超出允许范围（${rule.min} 到 ${rule.max}），收到：${value}`);
+    error.status = 400;
+    throw error;
+  }
+
+  return value;
+}
+
 function findClock(db, clockId) {
   const clock = db.clocks.find((item) => item.id === clockId);
   if (!clock) {
@@ -210,12 +255,13 @@ async function handle(req, res) {
   if (req.method === "POST" && pathname === "/clocks") {
     const body = await parseBody(req);
     required(body, ["code", "escapementType", "balanceFrequency"]);
+    const targetDailyRateSeconds = parseNumberField(body, "targetDailyRateSeconds", { defaultValue: 30 });
     const clock = {
       id: makeId("clock"),
       code: body.code,
       escapementType: body.escapementType,
       balanceFrequency: body.balanceFrequency,
-      targetDailyRateSeconds: Number(body.targetDailyRateSeconds ?? 30),
+      targetDailyRateSeconds,
       note: body.note || "",
       createdAt: new Date().toISOString()
     };
@@ -261,10 +307,11 @@ async function handle(req, res) {
     const clock = findClock(db, adjustmentMatch[1]);
     const body = await parseBody(req);
     required(body, ["currentDailyRateSeconds", "direction", "amount"]);
+    const currentDailyRateSeconds = parseNumberField(body, "currentDailyRateSeconds", { required: true });
     const adjustment = {
       id: makeId("adjustment"),
       clockId: clock.id,
-      currentDailyRateSeconds: Number(body.currentDailyRateSeconds),
+      currentDailyRateSeconds,
       direction: body.direction,
       amount: body.amount,
       note: body.note || "",
@@ -280,17 +327,19 @@ async function handle(req, res) {
     const clock = findClock(db, retestMatch[1]);
     const body = await parseBody(req);
     required(body, ["dailyRateSeconds", "amplitude"]);
+    const dailyRateSeconds = parseNumberField(body, "dailyRateSeconds", { required: true });
+    const amplitude = parseNumberField(body, "amplitude", { required: true });
     const adjustmentId = body.adjustmentId || latestAdjustment(db, clock.id)?.id || null;
     const qualified = body.qualified !== undefined
       ? Boolean(body.qualified)
-      : Math.abs(Number(body.dailyRateSeconds)) <= Number(clock.targetDailyRateSeconds);
+      : Math.abs(dailyRateSeconds) <= Number(clock.targetDailyRateSeconds);
     const retest = {
       id: makeId("retest"),
       clockId: clock.id,
       adjustmentId,
       testedAt: body.testedAt || new Date().toISOString(),
-      dailyRateSeconds: Number(body.dailyRateSeconds),
-      amplitude: Number(body.amplitude),
+      dailyRateSeconds,
+      amplitude,
       qualified,
       note: body.note || ""
     };
