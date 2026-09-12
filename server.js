@@ -151,6 +151,28 @@ function parseNumberField(body, field, { required = false, defaultValue } = {}) 
   return value;
 }
 
+// 解析复测时间：字段缺失时使用当前时间；空值、非字符串或不可解析的时间一律 400。
+// 合法字符串原样保留（沿用旧接口返回内容），仅用于排序时再解析。
+function parseTestedAt(body) {
+  const raw = body.testedAt;
+  if (raw === undefined) return new Date().toISOString();
+
+  if (typeof raw !== "string" || raw.trim() === "") {
+    const error = new Error("测试时间必须是可解析的时间字符串");
+    error.status = 400;
+    throw error;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error(`测试时间格式无法解析：${raw}`);
+    error.status = 400;
+    throw error;
+  }
+
+  return raw;
+}
+
 function findClock(db, clockId) {
   const clock = db.clocks.find((item) => item.id === clockId);
   if (!clock) {
@@ -337,7 +359,7 @@ async function handle(req, res) {
       id: makeId("retest"),
       clockId: clock.id,
       adjustmentId,
-      testedAt: body.testedAt || new Date().toISOString(),
+      testedAt: parseTestedAt(body),
       dailyRateSeconds,
       amplitude,
       qualified,
