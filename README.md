@@ -8,12 +8,22 @@
 PORT=3021 node server.js
 ```
 
+## 测试
+
+```bash
+node --test test/
+```
+
+零依赖（使用 Node 内置 test runner），测试会在临时 `db.json` 上启动独立服务实例，不影响正式数据。
+
 ## 主要接口
 
 - `GET /health`
 - `GET /clocks`
 - `POST /clocks`
 - `GET /clocks/not-qualified`
+- `GET /dashboard?qualified=true|false` — 调校质量看板（每表目标/最近日差、摆幅、合格、累计次数 + 全局汇总）
+- `GET /clocks/:id/dashboard` — 单只钟表看板
 - `GET /clocks/:id/history`
 - `POST /clocks/:id/adjustments`
 - `POST /clocks/:id/retests`

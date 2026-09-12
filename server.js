@@ -3,7 +3,7 @@ const { readFile, writeFile, mkdir } = require("fs/promises");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 3021);
-const DB_FILE = path.join(__dirname, "data", "db.json");
+const DB_FILE = process.env.CLOCK_DB_FILE || path.join(__dirname, "data", "db.json");
 
 const initialData = {
   clocks: [
@@ -47,6 +47,8 @@ const routes = [
   "GET /clocks",
   "POST /clocks",
   "GET /clocks/not-qualified",
+  "GET /dashboard",
+  "GET /clocks/:id/dashboard",
   "GET /clocks/:id/history",
   "POST /clocks/:id/adjustments",
   "POST /clocks/:id/retests",
@@ -137,6 +139,55 @@ function clockSummary(db, clock) {
   };
 }
 
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function average(values) {
+  if (!values.length) return null;
+  return round2(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+// 单只钟表的看板数据
+function dashboardRow(db, clock) {
+  const retest = latestRetest(db, clock.id);
+  const adjustmentCount = db.adjustments.filter((item) => item.clockId === clock.id).length;
+  const retestCount = db.retests.filter((item) => item.clockId === clock.id).length;
+  return {
+    clockId: clock.id,
+    code: clock.code,
+    targetDailyRateSeconds: clock.targetDailyRateSeconds,
+    latestDailyRateSeconds: retest ? retest.dailyRateSeconds : null,
+    amplitude: retest ? retest.amplitude : null,
+    qualified: retest ? retest.qualified : false,
+    adjustmentCount,
+    retestCount
+  };
+}
+
+// 全局汇总（始终基于全部钟表，不受筛选参数影响）
+function dashboardSummary(rows) {
+  const qualifiedCount = rows.filter((row) => row.qualified).length;
+  const retested = rows.filter((row) => row.latestDailyRateSeconds !== null);
+  return {
+    totalClockCount: rows.length,
+    pendingCount: rows.length - qualifiedCount,
+    qualifiedCount,
+    averageLatestDailyRateSeconds: average(retested.map((row) => row.latestDailyRateSeconds)),
+    averageAmplitude: average(retested.map((row) => row.amplitude))
+  };
+}
+
+// 看板的合格筛选参数仅接受 true / false，非法值返回 400
+function parseQualifiedParam(value) {
+  if (value === null) return null;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  const error = new Error("非法筛选参数：qualified 只能是 true 或 false");
+  error.status = 400;
+  throw error;
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const pathname = url.pathname;
@@ -176,6 +227,20 @@ async function handle(req, res) {
   if (req.method === "GET" && pathname === "/clocks/not-qualified") {
     const data = db.clocks.map((clock) => clockSummary(db, clock)).filter((clock) => !clock.qualified);
     return send(res, 200, { data });
+  }
+
+  if (req.method === "GET" && pathname === "/dashboard") {
+    const expected = parseQualifiedParam(url.searchParams.get("qualified"));
+    const allRows = db.clocks.map((clock) => dashboardRow(db, clock));
+    const data = expected === null ? allRows : allRows.filter((row) => row.qualified === expected);
+    // 汇总始终基于全部钟表，不受 qualified 筛选影响
+    return send(res, 200, { data, summary: dashboardSummary(allRows) });
+  }
+
+  const clockDashboardMatch = pathname.match(/^\/clocks\/([^/]+)\/dashboard$/);
+  if (clockDashboardMatch && req.method === "GET") {
+    const clock = findClock(db, clockDashboardMatch[1]);
+    return send(res, 200, { data: dashboardRow(db, clock) });
   }
 
   const historyMatch = pathname.match(/^\/clocks\/([^/]+)\/history$/);
@@ -259,5 +324,9 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Clock escapement tuning API running at http://127.0.0.1:${PORT}`);
+  if (!process.env.CLOCK_TEST) {
+    console.log(`Clock escapement tuning API running at http://127.0.0.1:${PORT}`);
+  }
 });
+
+module.exports = { server, routes };
