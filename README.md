@@ -22,7 +22,7 @@ node --test test/
 - `GET /clocks`
 - `POST /clocks`
 - `GET /clocks/not-qualified`
-- `GET /dashboard?qualified=true|false` — 调校质量看板（每表目标/最近日差、摆幅、合格、累计次数 + 全局汇总）
+- `GET /dashboard?qualified=true|false` — 调校质量看板（每表目标/最近日差、摆幅、合格、累计次数 + 全局汇总）；无钟表数据时返回 `400`，`qualified` 非 `true/false` 返回 `400`
 - `GET /clocks/:id/dashboard` — 单只钟表看板
 - `GET /clocks/:id/history`
 - `POST /clocks/:id/adjustments`

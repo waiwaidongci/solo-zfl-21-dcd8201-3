@@ -231,6 +231,11 @@ async function handle(req, res) {
 
   if (req.method === "GET" && pathname === "/dashboard") {
     const expected = parseQualifiedParam(url.searchParams.get("qualified"));
+    if (db.clocks.length === 0) {
+      const error = new Error("暂无钟表数据，无法生成看板");
+      error.status = 400;
+      throw error;
+    }
     const allRows = db.clocks.map((clock) => dashboardRow(db, clock));
     const data = expected === null ? allRows : allRows.filter((row) => row.qualified === expected);
     // 汇总始终基于全部钟表，不受 qualified 筛选影响

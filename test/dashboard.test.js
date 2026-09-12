@@ -57,17 +57,23 @@ after(async () => {
 });
 
 describe("调校质量看板", () => {
-  test("空数据：看板返回空列表和零值/空均值汇总", async () => {
+  test("空数据：看板返回 400 明确错误，且失败请求不写入任何数据", async () => {
     const { status, json } = await api("GET", "/dashboard");
-    assert.equal(status, 200);
-    assert.deepEqual(json.data, []);
-    assert.deepEqual(json.summary, {
-      totalClockCount: 0,
-      pendingCount: 0,
-      qualifiedCount: 0,
-      averageLatestDailyRateSeconds: null,
-      averageAmplitude: null
-    });
+    assert.equal(status, 400);
+    assert.match(json.error, /暂无钟表数据/);
+
+    // 带筛选参数时同样报错
+    const filtered = await api("GET", "/dashboard?qualified=true");
+    assert.equal(filtered.status, 400);
+    assert.match(filtered.json.error, /暂无钟表数据/);
+
+    // 失败请求未写入任何数据：各集合仍为空
+    const clocks = await api("GET", "/clocks");
+    assert.deepEqual(clocks.json.data, []);
+    const adjustments = await api("GET", "/adjustments");
+    assert.deepEqual(adjustments.json.data, []);
+    const retests = await api("GET", "/retests");
+    assert.deepEqual(retests.json.data, []);
   });
 
   test("正常统计：目标日差、最近复测、摆幅、合格状态与累计次数正确", async () => {
@@ -175,18 +181,32 @@ describe("调校质量看板", () => {
     assert.equal(json.summary.totalClockCount, 3);
   });
 
-  test("非法筛选参数返回 400 明确错误", async () => {
+  test("非法筛选参数返回 400 明确错误，且失败请求不写入数据", async () => {
+    const before = await api("GET", "/dashboard");
     for (const bad of ["yes", "1", "", "TRUE"]) {
       const { status, json } = await api("GET", `/dashboard?qualified=${encodeURIComponent(bad)}`);
       assert.equal(status, 400, `qualified=${bad} 应返回400`);
       assert.match(json.error, /qualified/);
     }
+    // 参数非法在数据校验之前拦截，数据与汇总均未被改动
+    const after = await api("GET", "/dashboard");
+    assert.equal(after.status, 200);
+    assert.equal(after.json.data.length, before.json.data.length);
+    assert.deepEqual(after.json.summary, before.json.summary);
   });
 
-  test("未知钟表的单表看板返回 404 明确错误", async () => {
+  test("未知钟表的单表看板返回 404 明确错误，且失败请求不写入数据", async () => {
+    const beforeClocks = (await api("GET", "/clocks")).json.data.length;
+    const beforeAdjustments = (await api("GET", "/adjustments")).json.data.length;
+    const beforeRetests = (await api("GET", "/retests")).json.data.length;
+
     const { status, json } = await api("GET", "/clocks/clock_not_exist/dashboard");
     assert.equal(status, 404);
     assert.equal(json.error, "钟表不存在");
+
+    assert.equal((await api("GET", "/clocks")).json.data.length, beforeClocks);
+    assert.equal((await api("GET", "/adjustments")).json.data.length, beforeAdjustments);
+    assert.equal((await api("GET", "/retests")).json.data.length, beforeRetests);
   });
 
   test("单表看板返回该钟表的统计", async () => {
